@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Work Log | Firebase Verified</title>
+    <title>Work Log | Attendance & OT</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-50 min-h-screen font-sans">
@@ -53,12 +53,10 @@
                             <option value="Late">⏰ Late</option>
                         </select>
                     </div>
-                    
                     <div id="ot-container" class="flex items-center gap-3 bg-blue-50 p-3 rounded-xl border border-blue-100">
                         <label class="text-xs font-bold text-blue-700 uppercase">OT (Hrs):</label>
                         <input type="number" id="ot-hours" step="0.5" value="0" class="w-20 bg-white rounded-lg p-2 text-sm outline-none font-bold">
                     </div>
-
                     <button type="submit" id="submit-btn" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-black transition-all">Save Entry</button>
                 </form>
             </div>
@@ -69,7 +67,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, where, getDocs, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, where, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
         const firebaseConfig = {
@@ -87,11 +85,7 @@
         const provider = new GoogleAuthProvider();
 
         let currentUser = null;
-        let existingDates = []; // Global store for local verification
-
-        document.getElementById('status').onchange = (e) => {
-            document.getElementById('ot-container').style.display = (e.target.value === 'Present') ? 'flex' : 'none';
-        };
+        let loggedDates = [];
 
         onAuthStateChanged(auth, (user) => {
             if (user) {
@@ -99,31 +93,29 @@
                 document.getElementById('login-screen').classList.add('hidden');
                 document.getElementById('app-content').classList.remove('hidden');
                 document.getElementById('att-date').valueAsDate = new Date();
-                loadAttendanceData(user.uid);
+                loadData(user.uid);
             } else {
                 document.getElementById('login-screen').classList.remove('hidden');
-                document.getElementById('app-content').classList.add('hidden');
             }
         });
 
-        function loadAttendanceData(uid) {
+        function loadData(uid) {
+            // This query requires the index: userId (ASC), date (DESC)
             const q = query(collection(db, 'attendance'), where("userId", "==", uid), orderBy('date', 'desc'));
             
             onSnapshot(q, (snapshot) => {
                 let html = '';
                 let stats = { curP: 0, curOT: 0, m1OT: 0, m2OT: 0 };
                 const now = new Date();
-                existingDates = []; 
+                loggedDates = [];
 
                 snapshot.docs.forEach(doc => {
                     const data = doc.data();
                     const date = data.date.toDate();
-                    const ot = parseFloat(data.otHours) || 0;
-                    
-                    // Track dates to prevent duplicates
-                    existingDates.push(date.toISOString().split('T')[0]);
+                    const dateStr = date.toISOString().split('T')[0];
+                    loggedDates.push(dateStr);
 
-                    // Stats logic
+                    const ot = parseFloat(data.otHours) || 0;
                     if (date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()) {
                         if(data.status === 'Present') stats.curP++;
                         stats.curOT += ot;
@@ -139,19 +131,18 @@
                                 <div class="bg-slate-100 text-[9px] font-bold p-2 rounded-lg text-slate-500 text-center uppercase">
                                     ${date.toLocaleDateString('en-GB', {day:'2-digit', month:'short'}).replace(' ', '<br>')}
                                 </div>
-                                <p class="text-sm font-bold ${data.status === 'Present' ? 'text-green-600' : 'text-red-500'}">${data.status} ${ot > 0 ? `(+${ot} OT)` : ''}</p>
+                                <p class="text-sm font-bold ${data.status === 'Present' ? 'text-green-600' : 'text-red-500'}">${data.status} ${ot > 0 ? `(+${ot} hrs)` : ''}</p>
                             </div>
                             <button onclick="deleteAtt('${doc.id}')" class="text-slate-200 hover:text-red-500">✕</button>
                         </div>`;
                 });
 
-                document.getElementById('attendance-list').innerHTML = html || '<p class="text-center text-slate-400 py-10 text-sm">No data found.</p>';
+                document.getElementById('attendance-list').innerHTML = html;
                 document.getElementById('present-count').innerText = stats.curP;
                 document.getElementById('current-ot-total').innerText = `${stats.curOT} hrs`;
                 document.getElementById('m1-ot').innerText = stats.m1OT;
                 document.getElementById('m2-ot').innerText = stats.m2OT;
 
-                // Set Month Names
                 const d1 = new Date(); d1.setMonth(now.getMonth() - 1);
                 const d2 = new Date(); d2.setMonth(now.getMonth() - 2);
                 document.getElementById('m1-name').innerText = d1.toLocaleString('default', { month: 'short' });
@@ -161,59 +152,24 @@
 
         document.getElementById('attendance-form').onsubmit = async (e) => {
             e.preventDefault();
-            const selectedDateStr = document.getElementById('att-date').value;
-            const btn = document.getElementById('submit-btn');
-
-            // 1. Check local list first (fast)
-            if (existingDates.includes(selectedDateStr)) {
-                alert("❌ Entry already exists for this date! Delete the existing entry first.");
+            const dateInput = document.getElementById('att-date').value;
+            
+            if (loggedDates.includes(dateInput)) {
+                alert("Only one entry per day allowed! Delete the old one first.");
                 return;
             }
 
-            btn.disabled = true;
-            btn.innerText = "Checking...";
-
-            try {
-                // 2. Final Firebase verification (safe)
-                const dateObj = new Date(selectedDateStr);
-                const start = new Date(dateObj.setHours(0,0,0,0));
-                const end = new Date(dateObj.setHours(23,59,59,999));
-
-                const q = query(collection(db, 'attendance'), 
-                    where("userId", "==", currentUser.uid),
-                    where("date", ">=", Timestamp.fromDate(start)),
-                    where("date", "<=", Timestamp.fromDate(end))
-                );
-                
-                const querySnapshot = await getDocs(q);
-                if (!querySnapshot.empty) {
-                    alert("❌ Date collision! Database already has an entry for this day.");
-                    btn.disabled = false;
-                    btn.innerText = "Save Entry";
-                    return;
-                }
-
-                // 3. Save if clear
-                await addDoc(collection(db, 'attendance'), {
-                    userId: currentUser.uid,
-                    date: Timestamp.fromDate(new Date(selectedDateStr)),
-                    status: document.getElementById('status').value,
-                    otHours: document.getElementById('status').value === 'Present' ? document.getElementById('ot-hours').value : 0,
-                    createdAt: Timestamp.now()
-                });
-                
-                e.target.reset();
-                document.getElementById('att-date').valueAsDate = new Date();
-            } catch (err) {
-                console.error(err);
-                alert("Error saving data. Check console for index link.");
-            } finally {
-                btn.disabled = false;
-                btn.innerText = "Save Entry";
-            }
+            await addDoc(collection(db, 'attendance'), {
+                userId: currentUser.uid,
+                date: Timestamp.fromDate(new Date(dateInput)),
+                status: document.getElementById('status').value,
+                otHours: document.getElementById('status').value === 'Present' ? document.getElementById('ot-hours').value : 0
+            });
+            e.target.reset();
+            document.getElementById('att-date').valueAsDate = new Date();
         };
 
-        window.deleteAtt = (id) => { if(confirm("Delete?")) deleteDoc(doc(db, 'attendance', id)); };
+        window.deleteAtt = (id) => { if(confirm("Delete entry?")) deleteDoc(doc(db, 'attendance', id)); };
         document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
         document.getElementById('logout-btn').onclick = () => signOut(auth);
     </script>
