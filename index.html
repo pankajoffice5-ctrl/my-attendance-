@@ -68,6 +68,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        // FIXED: Timestamp must be imported from firestore
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, where, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -87,11 +88,6 @@
         let currentUser = null;
         let loggedDates = [];
 
-        // Simple Toggle for OT input
-        document.getElementById('status').addEventListener('change', (e) => {
-            document.getElementById('ot-container').style.display = (e.target.value === 'Present') ? 'flex' : 'none';
-        });
-
         onAuthStateChanged(auth, (user) => {
             if (user) {
                 currentUser = user;
@@ -106,6 +102,7 @@
         });
 
         function loadData(uid) {
+            // This query requires a Composite Index
             const q = query(collection(db, 'attendance'), where("userId", "==", uid), orderBy('date', 'desc'));
             
             onSnapshot(q, (snapshot) => {
@@ -151,11 +148,8 @@
                 const d2 = new Date(); d2.setMonth(now.getMonth() - 2);
                 document.getElementById('m1-name').innerText = d1.toLocaleString('default', { month: 'short' });
                 document.getElementById('m2-name').innerText = d2.toLocaleString('default', { month: 'short' });
-            }, (error) => {
-                console.error("Firestore Error:", error.message);
-                if(error.message.includes("index")) {
-                    console.log("👉 Click the link above to create the required Firebase index.");
-                }
+            }, (err) => {
+                console.error("Index or Permission Error:", err);
             });
         }
 
@@ -172,13 +166,12 @@
                     userId: currentUser.uid,
                     date: Timestamp.fromDate(new Date(dateInput)),
                     status: document.getElementById('status').value,
-                    otHours: document.getElementById('status').value === 'Present' ? parseFloat(document.getElementById('ot-hours').value) : 0,
-                    createdAt: Timestamp.now()
+                    otHours: document.getElementById('status').value === 'Present' ? parseFloat(document.getElementById('ot-hours').value) : 0
                 });
                 e.target.reset();
                 document.getElementById('att-date').valueAsDate = new Date();
             } catch (err) {
-                alert("Error saving entry. Check console.");
+                alert("Error saving entry. Check Rules and Console.");
                 console.error(err);
             }
         };
