@@ -69,7 +69,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         
-        // FIXED: Timestamp must be imported from the firestore module
+        // FIXED: Timestamp must be imported from the firestore module to fix the SyntaxError
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, where, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -89,11 +89,12 @@
         let currentUser = null;
         let loggedDates = [];
 
-        // Toggle OT input visibility
+        // UI Logic for OT display
         document.getElementById('status').addEventListener('change', (e) => {
             document.getElementById('ot-container').style.display = (e.target.value === 'Present') ? 'flex' : 'none';
         });
 
+        // Authentication State
         onAuthStateChanged(auth, (user) => {
             if (user) {
                 currentUser = user;
@@ -107,6 +108,7 @@
             }
         });
 
+        // Load Data from Firestore
         function loadData(uid) {
             // Requires composite index: userId (Ascending), date (Descending)
             const q = query(collection(db, 'attendance'), where("userId", "==", uid), orderBy('date', 'desc'));
@@ -123,6 +125,8 @@
                     loggedDates.push(date.toISOString().split('T')[0]);
 
                     const ot = parseFloat(data.otHours) || 0;
+                    
+                    // Stats Calculation
                     if (date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()) {
                         if(data.status === 'Present') stats.curP++;
                         stats.curOT += ot;
@@ -132,18 +136,22 @@
                         stats.m2OT += ot;
                     }
 
+                    // Item HTML
                     html += `
                         <div class="bg-white p-4 rounded-2xl flex justify-between items-center shadow-sm border border-slate-100">
                             <div class="flex items-center gap-3">
                                 <div class="bg-slate-100 text-[9px] font-bold p-2 rounded-lg text-slate-500 text-center uppercase">
                                     ${date.toLocaleDateString('en-GB', {day:'2-digit', month:'short'}).replace(' ', '<br>')}
                                 </div>
-                                <p class="text-sm font-bold ${data.status === 'Present' ? 'text-green-600' : 'text-red-500'}">${data.status} ${ot > 0 ? `(+${ot} hrs)` : ''}</p>
+                                <p class="text-sm font-bold ${data.status === 'Present' ? 'text-green-600' : 'text-red-500'}">
+                                    ${data.status} ${ot > 0 ? `(+${ot} hrs)` : ''}
+                                </p>
                             </div>
                             <button onclick="deleteAtt('${doc.id}')" class="text-slate-200 hover:text-red-500">✕</button>
                         </div>`;
                 });
 
+                // Update UI
                 document.getElementById('attendance-list').innerHTML = html;
                 document.getElementById('present-count').innerText = stats.curP;
                 document.getElementById('current-ot-total').innerText = stats.curOT + " hrs";
@@ -159,15 +167,18 @@
             });
         }
 
+        // Add New Entry
         document.getElementById('attendance-form').onsubmit = async (e) => {
             e.preventDefault();
             const dateInput = document.getElementById('att-date').value;
+            
             if (loggedDates.includes(dateInput)) {
                 alert("Only one entry per day allowed!");
                 return;
             }
 
             try {
+                // Ensure field names match your database logic
                 await addDoc(collection(db, 'attendance'), {
                     userId: currentUser.uid,
                     date: Timestamp.fromDate(new Date(dateInput)),
@@ -175,17 +186,25 @@
                     otHours: document.getElementById('status').value === 'Present' ? parseFloat(document.getElementById('ot-hours').value) : 0,
                     createdAt: Timestamp.now()
                 });
+                
+                // Success - Reset form correctly
                 e.target.reset();
                 document.getElementById('att-date').valueAsDate = new Date();
                 document.getElementById('status').value = 'Present';
                 document.getElementById('ot-container').style.display = 'flex';
+                
             } catch (err) {
+                // This triggers if rules aren't published
                 alert("Error saving entry. Ensure your Firestore Rules are Published!");
                 console.error(err);
             }
         };
 
-        window.deleteAtt = async (id) => { if(confirm("Delete entry?")) await deleteDoc(doc(db, 'attendance', id)); };
+        // Global functions
+        window.deleteAtt = async (id) => { 
+            if(confirm("Delete this entry?")) await deleteDoc(doc(db, 'attendance', id)); 
+        };
+        
         document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
         document.getElementById('logout-btn').onclick = () => signOut(auth);
     </script>
