@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Work Log | Firebase Verified</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans">
+
+    <div id="login-screen" class="fixed inset-0 bg-slate-900 z-50 flex items-center justify-center p-6 text-center">
+        <div class="bg-white p-8 rounded-3xl max-w-sm w-full shadow-2xl">
+            <h2 class="text-3xl font-black mb-2 text-slate-800">Attendance Log</h2>
+            <button id="login-btn" class="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl hover:bg-blue-700 transition-all">Sign in with Google</button>
+        </div>
+    </div>
+
+    <div id="app-content" class="hidden max-w-md mx-auto pb-20">
+        <header class="bg-white border-b p-6 sticky top-0 z-10 flex justify-between items-center shadow-sm">
+            <div>
+                <h1 class="text-xl font-black text-blue-600">Attendance</h1>
+                <button id="logout-btn" class="text-[10px] font-bold text-red-500 uppercase tracking-widest mt-1">Logout</button>
+            </div>
+            <div class="text-right">
+                <p class="text-[10px] font-bold text-slate-400 uppercase">This Month OT</p>
+                <h2 id="current-ot-total" class="text-xl font-black text-blue-600">0 hrs</h2>
+            </div>
+        </header>
+
+        <section class="p-4 grid grid-cols-3 gap-2">
+            <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
+                <p id="m2-name" class="text-[9px] font-bold text-slate-400 uppercase">--</p>
+                <h3 id="m2-ot" class="text-sm font-black text-slate-700">0</h3>
+            </div>
+            <div class="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm text-center">
+                <p id="m1-name" class="text-[9px] font-bold text-slate-400 uppercase">--</p>
+                <h3 id="m1-ot" class="text-sm font-black text-slate-700">0</h3>
+            </div>
+            <div class="bg-blue-600 p-3 rounded-2xl shadow-md text-center text-white">
+                <p class="text-[9px] font-bold uppercase opacity-80">Present</p>
+                <h3 id="present-count" class="text-sm font-black">0</h3>
+            </div>
+        </section>
+
+        <section class="px-4 pb-4">
+            <div class="bg-white rounded-2xl border p-5 shadow-sm">
+                <form id="attendance-form" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-3">
+                        <input type="date" id="att-date" class="bg-slate-50 rounded-xl p-3 text-sm outline-none border focus:border-blue-300">
+                        <select id="status" class="bg-slate-50 rounded-xl p-3 text-sm outline-none border">
+                            <option value="Present">✅ Present</option>
+                            <option value="Absent">❌ Absent</option>
+                            <option value="Late">⏰ Late</option>
+                        </select>
+                    </div>
+                    
+                    <div id="ot-container" class="flex items-center gap-3 bg-blue-50 p-3 rounded-xl border border-blue-100">
+                        <label class="text-xs font-bold text-blue-700 uppercase">OT (Hrs):</label>
+                        <input type="number" id="ot-hours" step="0.5" value="0" class="w-20 bg-white rounded-lg p-2 text-sm outline-none font-bold">
+                    </div>
+
+                    <button type="submit" id="submit-btn" class="w-full bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-black transition-all">Save Entry</button>
+                </form>
+            </div>
+        </section>
+
+        <section id="attendance-list" class="px-4 space-y-3"></section>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, where, getDocs, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCDd-I_OFsCNreuUVbtfUFK-2IDGkhqHAE",
+            authDomain: "expanse-trac-e3e40.firebaseapp.com",
+            projectId: "expanse-trac-e3e40",
+            storageBucket: "expanse-trac-e3e40.firebasestorage.app",
+            messagingSenderId: "716119679836",
+            appId: "1:716119679836:web:6b4531be1aa9e41e5d1799"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        const provider = new GoogleAuthProvider();
+
+        let currentUser = null;
+        let existingDates = []; // Global store for local verification
+
+        document.getElementById('status').onchange = (e) => {
+            document.getElementById('ot-container').style.display = (e.target.value === 'Present') ? 'flex' : 'none';
+        };
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                document.getElementById('login-screen').classList.add('hidden');
+                document.getElementById('app-content').classList.remove('hidden');
+                document.getElementById('att-date').valueAsDate = new Date();
+                loadAttendanceData(user.uid);
+            } else {
+                document.getElementById('login-screen').classList.remove('hidden');
+                document.getElementById('app-content').classList.add('hidden');
+            }
+        });
+
+        function loadAttendanceData(uid) {
+            const q = query(collection(db, 'attendance'), where("userId", "==", uid), orderBy('date', 'desc'));
+            
+            onSnapshot(q, (snapshot) => {
+                let html = '';
+                let stats = { curP: 0, curOT: 0, m1OT: 0, m2OT: 0 };
+                const now = new Date();
+                existingDates = []; 
+
+                snapshot.docs.forEach(doc => {
+                    const data = doc.data();
+                    const date = data.date.toDate();
+                    const ot = parseFloat(data.otHours) || 0;
+                    
+                    // Track dates to prevent duplicates
+                    existingDates.push(date.toISOString().split('T')[0]);
+
+                    // Stats logic
+                    if (date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()) {
+                        if(data.status === 'Present') stats.curP++;
+                        stats.curOT += ot;
+                    } else if (date.getMonth() === (now.getMonth() - 1)) {
+                        stats.m1OT += ot;
+                    } else if (date.getMonth() === (now.getMonth() - 2)) {
+                        stats.m2OT += ot;
+                    }
+
+                    html += `
+                        <div class="bg-white p-4 rounded-2xl flex justify-between items-center shadow-sm border border-slate-100">
+                            <div class="flex items-center gap-3">
+                                <div class="bg-slate-100 text-[9px] font-bold p-2 rounded-lg text-slate-500 text-center uppercase">
+                                    ${date.toLocaleDateString('en-GB', {day:'2-digit', month:'short'}).replace(' ', '<br>')}
+                                </div>
+                                <p class="text-sm font-bold ${data.status === 'Present' ? 'text-green-600' : 'text-red-500'}">${data.status} ${ot > 0 ? `(+${ot} OT)` : ''}</p>
+                            </div>
+                            <button onclick="deleteAtt('${doc.id}')" class="text-slate-200 hover:text-red-500">✕</button>
+                        </div>`;
+                });
+
+                document.getElementById('attendance-list').innerHTML = html || '<p class="text-center text-slate-400 py-10 text-sm">No data found.</p>';
+                document.getElementById('present-count').innerText = stats.curP;
+                document.getElementById('current-ot-total').innerText = `${stats.curOT} hrs`;
+                document.getElementById('m1-ot').innerText = stats.m1OT;
+                document.getElementById('m2-ot').innerText = stats.m2OT;
+
+                // Set Month Names
+                const d1 = new Date(); d1.setMonth(now.getMonth() - 1);
+                const d2 = new Date(); d2.setMonth(now.getMonth() - 2);
+                document.getElementById('m1-name').innerText = d1.toLocaleString('default', { month: 'short' });
+                document.getElementById('m2-name').innerText = d2.toLocaleString('default', { month: 'short' });
+            });
+        }
+
+        document.getElementById('attendance-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const selectedDateStr = document.getElementById('att-date').value;
+            const btn = document.getElementById('submit-btn');
+
+            // 1. Check local list first (fast)
+            if (existingDates.includes(selectedDateStr)) {
+                alert("❌ Entry already exists for this date! Delete the existing entry first.");
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerText = "Checking...";
+
+            try {
+                // 2. Final Firebase verification (safe)
+                const dateObj = new Date(selectedDateStr);
+                const start = new Date(dateObj.setHours(0,0,0,0));
+                const end = new Date(dateObj.setHours(23,59,59,999));
+
+                const q = query(collection(db, 'attendance'), 
+                    where("userId", "==", currentUser.uid),
+                    where("date", ">=", Timestamp.fromDate(start)),
+                    where("date", "<=", Timestamp.fromDate(end))
+                );
+                
+                const querySnapshot = await getDocs(q);
+                if (!querySnapshot.empty) {
+                    alert("❌ Date collision! Database already has an entry for this day.");
+                    btn.disabled = false;
+                    btn.innerText = "Save Entry";
+                    return;
+                }
+
+                // 3. Save if clear
+                await addDoc(collection(db, 'attendance'), {
+                    userId: currentUser.uid,
+                    date: Timestamp.fromDate(new Date(selectedDateStr)),
+                    status: document.getElementById('status').value,
+                    otHours: document.getElementById('status').value === 'Present' ? document.getElementById('ot-hours').value : 0,
+                    createdAt: Timestamp.now()
+                });
+                
+                e.target.reset();
+                document.getElementById('att-date').valueAsDate = new Date();
+            } catch (err) {
+                console.error(err);
+                alert("Error saving data. Check console for index link.");
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Save Entry";
+            }
+        };
+
+        window.deleteAtt = (id) => { if(confirm("Delete?")) deleteDoc(doc(db, 'attendance', id)); };
+        document.getElementById('login-btn').onclick = () => signInWithPopup(auth, provider);
+        document.getElementById('logout-btn').onclick = () => signOut(auth);
+    </script>
+</body>
+</html>
